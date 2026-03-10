@@ -1,27 +1,28 @@
+import time
+from math import log, sqrt
+from random import choice, shuffle
 from player import Player
 from board import HexBoard
 
-def get_neighbors(r: int, c: int, size: int) -> list[tuple[int, int]]:
 
+def get_neighbors(r: int, c: int, size: int) -> list[tuple[int, int]]:
     if r % 2 == 0:
         deltas = [
             (-1, -1), (-1,  0),
-            ( 0, -1), ( 0, 1),
-            (1, -1), (1,  0)
+            ( 0, -1), ( 0,  1),
+            ( 1, -1), ( 1,  0),
         ]
     else:
         deltas = [
-            (-1,  0), (-1, 1),
-            ( 0, -1), ( 0, 1),
-            (1,  0), (1, 1)
+            (-1,  0), (-1,  1),
+            ( 0, -1), ( 0,  1),
+            ( 1,  0), ( 1,  1),
         ]
-
     neighbors = []
     for dr, dc in deltas:
         nr, nc = r + dr, c + dc
         if 0 <= nr < size and 0 <= nc < size:
             neighbors.append((nr, nc))
-
     return neighbors
 
 
@@ -74,11 +75,11 @@ class ReversibleDSU:
     def connect_borders(self, r: int, c: int) -> None:
         idx = r * self.size + c
         if self.player_id == 1:
-            if c == 0:               self.union(idx, self.VSTART)
-            if c == self.size - 1:   self.union(idx, self.VEND)
+            if c == 0:             self.union(idx, self.VSTART)
+            if c == self.size - 1: self.union(idx, self.VEND)
         else:
-            if r == 0:               self.union(idx, self.VSTART)
-            if r == self.size - 1:   self.union(idx, self.VEND)
+            if r == 0:             self.union(idx, self.VSTART)
+            if r == self.size - 1: self.union(idx, self.VEND)
 
 
 def make_move(
@@ -89,22 +90,15 @@ def make_move(
     dsu_opp: ReversibleDSU,
     size: int,
 ) -> tuple[int, int]:
-    """
-    Places cell_value at (r, c), updates the correct DSU incrementally.
-    Returns (cp_me, cp_opp) checkpoints to pass to undo_move.
-    """
     board[r][c] = cell_value
-    dsu = dsu_me if cell_value == 1 else dsu_opp
-
-    cp_me  = dsu_me.checkpoint()
-    cp_opp = dsu_opp.checkpoint()
-
-    idx = r * size + c
+    dsu        = dsu_me if cell_value == 1 else dsu_opp
+    cp_me      = dsu_me.checkpoint()
+    cp_opp     = dsu_opp.checkpoint()
+    idx        = r * size + c
     dsu.connect_borders(r, c)
     for nr, nc in get_neighbors(r, c, size):
         if board[nr][nc] == cell_value:
             dsu.union(idx, nr * size + nc)
-
     return cp_me, cp_opp
 
 
@@ -116,10 +110,40 @@ def undo_move(
     cp_me: int,
     cp_opp: int,
 ) -> None:
-    """Removes the piece at (r, c) and rolls back the DSU to the given checkpoints."""
     board[r][c] = 0
     dsu_me.rollback(cp_me)
     dsu_opp.rollback(cp_opp)
+
+
+# =============================================================================
+# PHASE 4 — MCTS Base
+# =============================================================================
+
+class MCTSNode:
+    """
+    player       : cell_value (1 or 2) of whoever made the move to reach this node.
+                   None for the root.
+    wins         : wins for `player` accumulated through simulations.
+    untried_moves: free cells not yet expanded as children from this node.
+    """
+    __slots__ = ('move', 'player', 'wins', 'visits', 'children', 'untried_moves', 'parent')
+
+    def __init__(self, move, player, untried_moves, parent=None):
+        self.move          = move
+        self.player        = player
+        self.wins          = 0
+        self.visits        = 0
+        self.children      = []
+        self.untried_moves = untried_moves
+        self.parent        = parent
+
+    def ucb1(self) -> float:
+        if self.visits == 0:
+            return float('inf')
+        return self.wins / self.visits + sqrt(2) * sqrt(log(self.parent.visits) / self.visits)
+
+    def best_child(self) -> 'MCTSNode':
+        return max(self.children, key=lambda n: n.ucb1())
 
 
 class SmartPlayer(Player):
@@ -127,4 +151,99 @@ class SmartPlayer(Player):
         super().__init__(player_id)
 
     def play(self, board: HexBoard) -> tuple:
-        pass
+        size = board.size
+        b    = [row[:] for row in board.board]
+
+        # Build DSUs incrementally from the existing board state
+        dsu_me  = ReversibleDSU(size, self.player_id)
+        dsu_opp = ReversibleDSU(size, 3 - self.player_id)
+        for r in range(size):
+            for c in range(size):
+                if b[r][c] != 0:
+                    make_move(b, r, c, b[r][c], dsu_me, dsu_opp, size)
+
+        free = [(r, c) for r in range(size) for c in range(size) if b[r][c] == 0]
+
+        if len(free) == 1:
+            return free[0]
+
+        root = MCTSNode(move=None, player=None, untried_moves=free[:], parent=None)
+
+        # margin = 0.35s OS/GC jitter buffer + 0.002s per unit of N (algorithmic growth)
+        deadline = time.time() + 5.0 - (0.35 + 0.002 * size)
+
+        while time.time() < deadline:
+            node    = root
+            # path entries: (node, r, c, cp_me, cp_opp)
+            path    = []
+            to_move = 1
+            winner  = 0
+
+            # SELECT
+            while not node.untried_moves and node.children:
+                node       = node.best_child()
+                r, c       = node.move
+                cp_me, cp_opp = make_move(b, r, c, to_move, dsu_me, dsu_opp, size)
+                path.append((node, r, c, cp_me, cp_opp))
+                to_move    = 3 - to_move
+                if dsu_me.win():
+                    winner = 1; break
+                if dsu_opp.win():
+                    winner = 2; break
+
+            # EXPAND
+            if not winner and node.untried_moves:
+                r, c = choice(node.untried_moves)
+                node.untried_moves.remove((r, c))
+                cp_me, cp_opp = make_move(b, r, c, to_move, dsu_me, dsu_opp, size)
+
+                if dsu_me.win():    winner = 1
+                elif dsu_opp.win(): winner = 2
+
+                child_free = [
+                    (r2, c2) for r2 in range(size)
+                    for c2 in range(size) if b[r2][c2] == 0
+                ]
+                child = MCTSNode(
+                    move=(r, c), player=to_move,
+                    untried_moves=child_free, parent=node
+                )
+                node.children.append(child)
+                path.append((child, r, c, cp_me, cp_opp))
+                node    = child
+                to_move = 3 - to_move
+
+            # SIMULATE (random playout)
+            if not winner:
+                sim_path    = []
+                sim_cells   = [
+                    (r2, c2) for r2 in range(size)
+                    for c2 in range(size) if b[r2][c2] == 0
+                ]
+                shuffle(sim_cells)
+                sim_to_move = to_move
+
+                for r2, c2 in sim_cells:
+                    cp_me, cp_opp = make_move(b, r2, c2, sim_to_move, dsu_me, dsu_opp, size)
+                    sim_path.append((r2, c2, cp_me, cp_opp))
+                    if dsu_me.win():
+                        winner = 1; break
+                    if dsu_opp.win():
+                        winner = 2; break
+                    sim_to_move = 3 - sim_to_move
+
+                for r2, c2, cp_me, cp_opp in reversed(sim_path):
+                    undo_move(b, r2, c2, dsu_me, dsu_opp, cp_me, cp_opp)
+
+            # BACKPROPAGATE
+            for pnode, _, _, _, _ in reversed(path):
+                pnode.visits += 1
+                if pnode.player == winner:
+                    pnode.wins += 1
+            root.visits += 1
+
+            # UNDO PATH
+            for _, pr, pc, cp_me, cp_opp in reversed(path):
+                undo_move(b, pr, pc, dsu_me, dsu_opp, cp_me, cp_opp)
+
+        return max(root.children, key=lambda n: n.visits).move
