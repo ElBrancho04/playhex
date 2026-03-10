@@ -115,10 +115,6 @@ def undo_move(
     dsu_opp.rollback(cp_opp)
 
 
-# =============================================================================
-# PHASE 4 — MCTS Base
-# =============================================================================
-
 class MCTSNode:
     """
     player       : cell_value (1 or 2) of whoever made the move to reach this node.
