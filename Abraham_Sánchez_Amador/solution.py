@@ -180,6 +180,24 @@ class SmartPlayer(Player):
         if len(free) == 1:
             return free[0]
 
+        # Forced moves
+        # Pass 1: immediate winning move for me
+        for r, c in free:
+            cp = make_move(b, r, c, 1, dsu_me, dsu_opp, size)
+            won = dsu_me.win()
+            undo_move(b, r, c, dsu_me, dsu_opp, *cp)
+            if won:
+                return (r, c)
+
+        # Pass 2: block opponent's immediate winning move
+        for r, c in free:
+            cp = make_move(b, r, c, 2, dsu_me, dsu_opp, size)
+            opp_wins = dsu_opp.win()
+            undo_move(b, r, c, dsu_me, dsu_opp, *cp)
+            if opp_wins:
+                return (r, c)
+        # ______________________________________________________
+
         root = MCTSNode(
             move=None, player=None,
             untried_moves=free[:], free_cells=free[:],
