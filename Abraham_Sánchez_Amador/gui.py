@@ -493,7 +493,18 @@ class HexGUI:
         threading.Thread(target=self._ai_move, daemon=True).start()
 
     def _ai_move(self):
-        move    = self.ai.play(self.hex_board)
+        # Normalizar el tablero
+        normalized = HexBoard(self.size)
+        for r in range(self.size):
+            for c in range(self.size):
+                val = self.hex_board.board[r][c]
+                if val == self.ai_pid:
+                    normalized.board[r][c] = 1
+                elif val == self.human_pid:
+                    normalized.board[r][c] = 2
+                else:
+                    normalized.board[r][c] = 0
+        move    = self.ai.play(normalized)
         elapsed = time.time() - self._think_start
         self.root.after(0, lambda: self._apply_ai_move(move, elapsed))
 
