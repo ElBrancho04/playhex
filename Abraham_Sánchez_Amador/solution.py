@@ -1,3 +1,4 @@
+import heapq
 import time
 from math import log, sqrt
 from random import choice, shuffle
@@ -29,6 +30,80 @@ def get_neighbors(r: int, c: int, size: int) -> list[tuple[int, int]]:
 # Module-level neighbors cache: _NBRS[size][r][c] → list of (nr, nc)
 # Built once per board size, reused across every make_move call.
 _NBRS: dict[int, list] = {}
+
+
+def resistance_dijkstra(
+    board: list[list[int]],
+    player_id: int,
+    size: int,
+) -> set[tuple[int, int]]:
+    VSTART = size * size
+    VEND   = size * size + 1
+    total  = size * size + 2
+    INF    = float('inf')
+
+    def cell_cost(idx: int) -> float:
+        if idx >= VSTART:
+            return 0.0
+        r, c = divmod(idx, size)
+        val  = board[r][c]
+        if val == 1: return 0.0
+        if val == 0: return 1.0
+        return INF
+
+    def neighbors(idx: int) -> list[int]:
+        if idx == VSTART:
+            return (
+                [r * size           for r in range(size)] if player_id == 1
+                else [              c for c in range(size)]
+            )
+        if idx == VEND:
+            return (
+                [r * size + size - 1 for r in range(size)] if player_id == 1
+                else [(size - 1) * size + c for c in range(size)]
+            )
+        r, c   = divmod(idx, size)
+        result = [nr * size + nc for nr, nc in _NBRS[size][r][c]]
+        if player_id == 1:
+            if c == 0:          result.append(VSTART)
+            if c == size - 1:   result.append(VEND)
+        else:
+            if r == 0:          result.append(VSTART)
+            if r == size - 1:   result.append(VEND)
+        return result
+
+    def dijkstra(source: int) -> list[float]:
+        dist = [INF] * total
+        dist[source] = 0.0
+        heap = [(0.0, source)]
+        while heap:
+            d, u = heapq.heappop(heap)
+            if d > dist[u]:
+                continue
+            for v in neighbors(u):
+                cost_v = cell_cost(v)
+                if cost_v == INF:
+                    continue
+                nd = d + cost_v
+                if nd < dist[v]:
+                    dist[v] = nd
+                    heapq.heappush(heap, (nd, v))
+        return dist
+
+    dist_start = dijkstra(VSTART)
+    dist_end   = dijkstra(VEND)
+
+    shortest = dist_start[VEND]
+    if shortest == INF:
+        return set()
+
+    return {
+        (r, c)
+        for r in range(size)
+        for c in range(size)
+        if board[r][c] == 0
+        and dist_start[r * size + c] + dist_end[r * size + c] - 1.0 == shortest
+    }
 
 
 class ReversibleDSU:
