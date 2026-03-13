@@ -99,43 +99,51 @@ def load_player(path: str, player_id: int):
     return module.SmartPlayer(player_id)
 
 
+TIME_LIMIT = 4.95
+
+
 def play_game(p1_path: str, p2_path: str, size: int, verbose: bool = False):
     """
     Juega una partida completa.
     p1 tiene id=1 (conecta izq↔der), p2 tiene id=2 (conecta arr↕abaj).
     El tablero se normaliza para cada jugador antes de llamar a play().
-    Devuelve (winner_id, moves, duration_p1, duration_p2).
+    Devuelve (winner_id, moves, duration_p1, duration_p2, violations).
+    violations: lista de strings describiendo jugadas que superaron TIME_LIMIT.
     """
-    p1    = load_player(p1_path, 1)
-    p2    = load_player(p2_path, 2)
-    board = [[0] * size for _ in range(size)]
-    turn  = 1
-    moves = 0
-    time1 = 0.0
-    time2 = 0.0
+    p1         = load_player(p1_path, 1)
+    p2         = load_player(p2_path, 2)
+    board      = [[0] * size for _ in range(size)]
+    turn       = 1
+    moves      = 0
+    time1      = 0.0
+    time2      = 0.0
+    violations = []
 
     while True:
         hb = HexBoard(size)
         if turn == 1:
-            # Tablero normalizado para p1: sus fichas=1, rival=2 (ya está así)
             hb.board = [row[:] for row in board]
-            t0   = time.time()
-            move = p1.play(hb)
-            time1 += time.time() - t0
+            t0       = time.time()
+            move     = p1.play(hb)
+            elapsed  = time.time() - t0
+            time1   += elapsed
+            if elapsed > TIME_LIMIT:
+                violations.append(f"S1 jugada {moves+1}: {elapsed:.3f}s")
         else:
-            # Tablero normalizado para p2: sus fichas=1, rival=2 (invertir)
             hb.board = [
                 [2 if v == 1 else (1 if v == 2 else 0) for v in row]
                 for row in board
             ]
-            t0   = time.time()
-            move = p2.play(hb)
-            time2 += time.time() - t0
+            t0       = time.time()
+            move     = p2.play(hb)
+            elapsed  = time.time() - t0
+            time2   += elapsed
+            if elapsed > TIME_LIMIT:
+                violations.append(f"S2 jugada {moves+1}: {elapsed:.3f}s")
 
         r, c = move
         if board[r][c] != 0:
-            # Jugada inválida → pierde
-            return (3 - turn), moves, time1, time2
+            return (3 - turn), moves, time1, time2, violations
 
         board[r][c] = turn
         moves      += 1
@@ -144,9 +152,10 @@ def play_game(p1_path: str, p2_path: str, size: int, verbose: bool = False):
         if winner:
             if verbose:
                 label = "S1" if winner == 1 else "S2"
-                print(f"    Gana {label} en {moves} jugadas  "
-                      f"(S1: {time1:.2f}s, S2: {time2:.2f}s)")
-            return winner, moves, time1, time2
+                t_str = f"(S1: {time1:.2f}s total, S2: {time2:.2f}s total)"
+                v_str = f"  ⚠ {len(violations)} violación(es)" if violations else ""
+                print(f"    Gana {label} en {moves} jugadas  {t_str}{v_str}")
+            return winner, moves, time1, time2, violations
 
         turn = 3 - turn
 
@@ -179,7 +188,7 @@ def run_tournament(s1_path: str, s2_path: str):
             print(f"  Partida {game_idx+1}/{GAMES_PER_SIZE} ({label}) ... ", end="", flush=True)
 
             try:
-                winner_id, moves, t1, t2 = play_game(p1_path, p2_path, size, verbose=True)
+                winner_id, moves, t1, t2, viols = play_game(p1_path, p2_path, size, verbose=True)
             except Exception as e:
                 print(f"ERROR: {e}")
                 total["errors"] += 1
@@ -192,11 +201,14 @@ def run_tournament(s1_path: str, s2_path: str):
             else:
                 s1_won = (winner_id == 2)
 
-            winner_label = "S1" if s1_won else "S2"
-            starter      = "S1" if s1_starts else "S2"
+            # Reportar violaciones de tiempo
+            if viols:
+                for v in viols:
+                    print(f"    ⚠  VIOLACIÓN DE TIEMPO ({size}×{size} partida {game_idx+1}): {v}")
+                total["violations"] += len(viols)
 
             # Acumular estadísticas
-            total["games"]       += 1
+            total["games"]         += 1
             by_size[size]["games"] += 1
 
             if s1_won:
@@ -250,9 +262,14 @@ def run_tournament(s1_path: str, s2_path: str):
     print(f"  S1 en tableros >{SMALL_THRESHOLD}  : {pct(total['s1_large_wins'], total['large_games'])}"
           f"  ({total['s1_large_wins']}/{total['large_games']})")
     print()
-    print(f"  Jugadas promedio   : {total['total_moves']/g:.1f}")
+    print(f"  Jugadas promedio        : {total['total_moves']/g:.1f}")
     print(f"  Tiempo medio S1/partida : {total['total_t1']/g:.2f}s")
     print(f"  Tiempo medio S2/partida : {total['total_t2']/g:.2f}s")
+    viols = total["violations"]
+    if viols:
+        print(f"  ⚠ Violaciones >{TIME_LIMIT}s  : {viols} jugada(s)")
+    else:
+        print(f"  ✓ Sin violaciones de tiempo (>{TIME_LIMIT}s)")
 
     print("\n── Por tamaño ──")
     print(f"  {'Tamaño':>7}  {'Partidas':>8}  {'S1 wins':>8}  {'S2 wins':>8}  {'S1 %':>6}")
