@@ -1,7 +1,7 @@
 import heapq
 import time
 from math import log, sqrt
-from random import choice, shuffle
+from random import choice, random, sample, shuffle
 from player import Player
 from board import HexBoard
 
@@ -95,7 +95,7 @@ def resistance_dijkstra(
 
     shortest = dist_start[VEND]
     if shortest == INF:
-        return set()
+        return set(), INF
 
     return {
         (r, c)
@@ -103,7 +103,7 @@ def resistance_dijkstra(
         for c in range(size)
         if board[r][c] == 0
         and dist_start[r * size + c] + dist_end[r * size + c] - 1.0 == shortest
-    }
+    }, shortest
 
 
 class ReversibleDSU:
@@ -325,14 +325,55 @@ class SmartPlayer(Player):
                 node    = child
                 to_move = 3 - to_move
 
-            # SIMULATE (random playout)
+            # SIMULATE (Dijkstra-guided playout)
             if not winner:
                 sim_path    = []
-                sim_cells   = node.free_cells[:]
-                shuffle(sim_cells)
                 sim_to_move = to_move
 
-                for r2, c2 in sim_cells:
+                # Dijkstra for player 1 (board normalized: own=1, opp=2)
+                crit1, d1 = resistance_dijkstra(b, 1, size)
+                # Dijkstra for player 2 (invert board so own=2 becomes own=1)
+                b_inv      = [[2 if v == 1 else (1 if v == 2 else 0) for v in row] for row in b]
+                crit2, d2  = resistance_dijkstra(b_inv, 2, size)
+
+                # Adaptive weight: prob player 1 plays offensively.
+                # When d2 is small (player 2 close to winning), player 1 defends more.
+                total_d = d1 + d2
+                p1_off  = (d2 / total_d) if total_d > 0 else 0.5
+
+                # Four disjoint pools — each cell belongs to exactly one.
+                free_set   = set(node.free_cells)
+                both_pool  = list(free_set & crit1 & crit2)
+                only1_pool = list((free_set & crit1) - crit2)
+                only2_pool = list((free_set & crit2) - crit1)
+                other_pool = list(free_set - crit1 - crit2)
+
+                def _pop_random(lst):
+                    idx      = int(random() * len(lst))
+                    val      = lst[idx]
+                    lst[idx] = lst[-1]
+                    lst.pop()
+                    return val
+
+                while both_pool or only1_pool or only2_pool or other_pool:
+                    any_crit = both_pool or only1_pool or only2_pool
+                    if not other_pool or (any_crit and random() < 0.7):
+                        if both_pool:
+                            chosen = _pop_random(both_pool)
+                        else:
+                            p_off  = p1_off if sim_to_move == 1 else 1.0 - p1_off
+                            off_pool, def_pool = (
+                                (only1_pool, only2_pool) if sim_to_move == 1
+                                else (only2_pool, only1_pool)
+                            )
+                            if off_pool and (not def_pool or random() < p_off):
+                                chosen = _pop_random(off_pool)
+                            else:
+                                chosen = _pop_random(def_pool)
+                    else:
+                        chosen = _pop_random(other_pool)
+
+                    r2, c2        = chosen
                     cp_me, cp_opp = make_move(b, r2, c2, sim_to_move, dsu_me, dsu_opp, size)
                     sim_path.append((r2, c2, cp_me, cp_opp))
                     if dsu_me.win():
