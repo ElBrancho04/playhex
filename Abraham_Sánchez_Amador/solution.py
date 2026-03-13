@@ -284,7 +284,7 @@ class SmartPlayer(Player):
         )
 
         # margin = 0.35s OS/GC jitter buffer + 0.002s per unit of N (algorithmic growth)
-        deadline = time.time() + 5.0 - (0.35 + 0.002 * size)
+        deadline = time.time() + 5.0 - (0.15 + 0.002 * size)
 
         while time.time() < deadline:
             node    = root
