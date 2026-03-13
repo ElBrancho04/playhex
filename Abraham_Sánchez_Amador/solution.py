@@ -147,7 +147,11 @@ class MCTSNode:
     def ucb1(self) -> float:
         if self.visits == 0:
             return float('inf')
-        return self.wins / self.visits + sqrt(2) * sqrt(log(self.parent.visits) / self.visits)
+        exploitation = self.wins / self.visits
+        log_term     = log(self.parent.visits) / self.visits
+        # Varianza observada estimada, acotada por el máximo teórico 1/4
+        variance     = exploitation - exploitation ** 2 + sqrt(2 * log_term)
+        return exploitation + sqrt(log_term * min(0.25, variance))
 
     def best_child(self) -> 'MCTSNode':
         return max(self.children, key=lambda n: n.ucb1())
