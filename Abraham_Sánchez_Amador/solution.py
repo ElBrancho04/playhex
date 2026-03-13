@@ -1,7 +1,7 @@
 import heapq
 import time
 from math import log, sqrt
-from random import choice, random, sample, shuffle
+from random import choice, random
 from player import Player
 from board import HexBoard
 
@@ -36,7 +36,7 @@ def resistance_dijkstra(
     board: list[list[int]],
     player_id: int,
     size: int,
-) -> set[tuple[int, int]]:
+) -> tuple[set[tuple[int, int]], float]:
     VSTART = size * size
     VEND   = size * size + 1
     total  = size * size + 2
@@ -54,8 +54,8 @@ def resistance_dijkstra(
     def neighbors(idx: int) -> list[int]:
         if idx == VSTART:
             return (
-                [r * size           for r in range(size)] if player_id == 1
-                else [              c for c in range(size)]
+                [r * size for r in range(size)] if player_id == 1
+                else [c for c in range(size)]
             )
         if idx == VEND:
             return (
@@ -65,17 +65,17 @@ def resistance_dijkstra(
         r, c   = divmod(idx, size)
         result = [nr * size + nc for nr, nc in _NBRS[size][r][c]]
         if player_id == 1:
-            if c == 0:          result.append(VSTART)
-            if c == size - 1:   result.append(VEND)
+            if c == 0:        result.append(VSTART)
+            if c == size - 1: result.append(VEND)
         else:
-            if r == 0:          result.append(VSTART)
-            if r == size - 1:   result.append(VEND)
+            if r == 0:        result.append(VSTART)
+            if r == size - 1: result.append(VEND)
         return result
 
     def dijkstra(source: int) -> list[float]:
-        dist = [INF] * total
+        dist         = [INF] * total
         dist[source] = 0.0
-        heap = [(0.0, source)]
+        heap         = [(0.0, source)]
         while heap:
             d, u = heapq.heappop(heap)
             if d > dist[u]:
@@ -92,8 +92,8 @@ def resistance_dijkstra(
 
     dist_start = dijkstra(VSTART)
     dist_end   = dijkstra(VEND)
+    shortest   = dist_start[VEND]
 
-    shortest = dist_start[VEND]
     if shortest == INF:
         return set(), INF
 
@@ -275,7 +275,12 @@ class SmartPlayer(Player):
             undo_move(b, r, c, dsu_me, dsu_opp, *cp)
             if opp_wins:
                 return (r, c)
-        # ______________________________________________________
+
+        crit1, d1 = resistance_dijkstra(b, 1, size)
+        b_inv     = [[2 if v == 1 else (1 if v == 2 else 0) for v in row] for row in b]
+        crit2, d2 = resistance_dijkstra(b_inv, 2, size)
+        total_d   = d1 + d2
+        p1_off    = (d2 / total_d) if total_d > 0 else 0.5
 
         root = MCTSNode(
             move=None, player=None,
@@ -283,8 +288,14 @@ class SmartPlayer(Player):
             parent=None,
         )
 
-        # margin = 0.35s OS/GC jitter buffer + 0.002s per unit of N (algorithmic growth)
-        deadline = time.time() + 5.0 - (0.15 + 0.002 * size)
+        deadline = time.time() + 5.0 - (0.35 + 0.002 * size)
+
+        def _pop_random(lst):
+            idx      = int(random() * len(lst))
+            val      = lst[idx]
+            lst[idx] = lst[-1]
+            lst.pop()
+            return val
 
         while time.time() < deadline:
             node    = root
@@ -329,31 +340,11 @@ class SmartPlayer(Player):
             if not winner:
                 sim_path    = []
                 sim_to_move = to_move
-
-                # Dijkstra for player 1 (board normalized: own=1, opp=2)
-                crit1, d1 = resistance_dijkstra(b, 1, size)
-                # Dijkstra for player 2 (invert board so own=2 becomes own=1)
-                b_inv      = [[2 if v == 1 else (1 if v == 2 else 0) for v in row] for row in b]
-                crit2, d2  = resistance_dijkstra(b_inv, 2, size)
-
-                # Adaptive weight: prob player 1 plays offensively.
-                # When d2 is small (player 2 close to winning), player 1 defends more.
-                total_d = d1 + d2
-                p1_off  = (d2 / total_d) if total_d > 0 else 0.5
-
-                # Four disjoint pools — each cell belongs to exactly one.
-                free_set   = set(node.free_cells)
-                both_pool  = list(free_set & crit1 & crit2)
-                only1_pool = list((free_set & crit1) - crit2)
-                only2_pool = list((free_set & crit2) - crit1)
-                other_pool = list(free_set - crit1 - crit2)
-
-                def _pop_random(lst):
-                    idx      = int(random() * len(lst))
-                    val      = lst[idx]
-                    lst[idx] = lst[-1]
-                    lst.pop()
-                    return val
+                free_set    = set(node.free_cells)
+                both_pool   = list(free_set & crit1 & crit2)
+                only1_pool  = list((free_set & crit1) - crit2)
+                only2_pool  = list((free_set & crit2) - crit1)
+                other_pool  = list(free_set - crit1 - crit2)
 
                 while both_pool or only1_pool or only2_pool or other_pool:
                     any_crit = both_pool or only1_pool or only2_pool
@@ -361,15 +352,17 @@ class SmartPlayer(Player):
                         if both_pool:
                             chosen = _pop_random(both_pool)
                         else:
-                            p_off  = p1_off if sim_to_move == 1 else 1.0 - p1_off
+                            p_off              = p1_off if sim_to_move == 1 else 1.0 - p1_off
                             off_pool, def_pool = (
                                 (only1_pool, only2_pool) if sim_to_move == 1
                                 else (only2_pool, only1_pool)
                             )
                             if off_pool and (not def_pool or random() < p_off):
                                 chosen = _pop_random(off_pool)
-                            else:
+                            elif def_pool:
                                 chosen = _pop_random(def_pool)
+                            else:
+                                chosen = _pop_random(both_pool)
                     else:
                         chosen = _pop_random(other_pool)
 
