@@ -319,6 +319,22 @@ class SmartPlayer(Player):
 
         deadline = time.time() + 5.0 - (0.35 + 0.002 * size)
 
+        def _find_forced(candidates, to_move):
+            for r2, c2 in candidates:
+                cp  = make_move(b, r2, c2, to_move, dsu_me, dsu_opp, size)
+                won = dsu_me.win() if to_move == 1 else dsu_opp.win()
+                undo_move(b, r2, c2, dsu_me, dsu_opp, *cp)
+                if won:
+                    return (r2, c2)
+            opp = 3 - to_move
+            for r2, c2 in candidates:
+                cp       = make_move(b, r2, c2, opp, dsu_me, dsu_opp, size)
+                opp_wins = dsu_opp.win() if opp == 2 else dsu_me.win()
+                undo_move(b, r2, c2, dsu_me, dsu_opp, *cp)
+                if opp_wins:
+                    return (r2, c2)
+            return None
+
         def _pop_random(lst):
             idx      = int(random() * len(lst))
             val      = lst[idx]
@@ -365,7 +381,7 @@ class SmartPlayer(Player):
                 node    = child
                 to_move = 3 - to_move
 
-            # SIMULATE (Dijkstra-guided playout)
+            # SIMULATE (Dijkstra-guided playout with decaying confidence and forced moves)
             if not winner:
                 sim_path    = []
                 sim_to_move = to_move
@@ -374,10 +390,45 @@ class SmartPlayer(Player):
                 only1_pool  = list((free_set & crit1) - crit2)
                 only2_pool  = list((free_set & crit2) - crit1)
                 other_pool  = list(free_set - crit1 - crit2)
+                steps_total = len(node.free_cells)
+
+                # Seed last move from path so neighbor scan works from first step
+                forced          = None
+                last_r2, last_c2 = (path[-1][1], path[-1][2]) if path else (-1, -1)
 
                 while both_pool or only1_pool or only2_pool or other_pool:
+                    remaining = len(both_pool) + len(only1_pool) + len(only2_pool) + len(other_pool)
+
+                    # Forced move: use precomputed result or scan neighbors of last played cell
+                    if forced is None and last_r2 >= 0:
+                        nbr_candidates = [
+                            (nr, nc) for nr, nc in _NBRS[size][last_r2][last_c2]
+                            if b[nr][nc] == 0
+                        ]
+                        forced = _find_forced(nbr_candidates, sim_to_move)
+
+                    if forced is not None:
+                        r2, c2 = forced
+                        forced = None
+                        for pool in (both_pool, only1_pool, only2_pool, other_pool):
+                            if (r2, c2) in pool:
+                                pool.remove((r2, c2)); break
+                        cp_me, cp_opp = make_move(b, r2, c2, sim_to_move, dsu_me, dsu_opp, size)
+                        sim_path.append((r2, c2, cp_me, cp_opp))
+                        last_r2, last_c2 = r2, c2
+                        if dsu_me.win():
+                            winner = 1; break
+                        if dsu_opp.win():
+                            winner = 2; break
+                        sim_to_move = 3 - sim_to_move
+                        continue
+
+                    # Decaying confidence: reaches 0 at 66.7% of playout
+                    steps_played = steps_total - remaining
+                    p_crit       = max(0.0, 1.0 - 1.5 * (steps_played / steps_total))
+
                     any_crit = both_pool or only1_pool or only2_pool
-                    if not other_pool or (any_crit and random() < 0.7):
+                    if any_crit and (not other_pool or random() < p_crit):
                         if both_pool:
                             chosen = _pop_random(both_pool)
                         else:
@@ -398,6 +449,7 @@ class SmartPlayer(Player):
                     r2, c2        = chosen
                     cp_me, cp_opp = make_move(b, r2, c2, sim_to_move, dsu_me, dsu_opp, size)
                     sim_path.append((r2, c2, cp_me, cp_opp))
+                    last_r2, last_c2 = r2, c2
                     if dsu_me.win():
                         winner = 1; break
                     if dsu_opp.win():
