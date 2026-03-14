@@ -97,12 +97,41 @@ def resistance_dijkstra(
     if shortest == INF:
         return set(), INF
 
+    # Two-distance toward VEND: assume opponent blocks the single best onward neighbor.
+    # two_dist_end[v] = cell_cost(v) + second_min{dist_end[u] : u in neighbors(v)}
+    two_dist_end        = [INF] * total
+    two_dist_end[VEND]  = 0.0
+    for idx in range(total):
+        if idx == VEND:
+            continue
+        cost = cell_cost(idx)
+        if cost == INF:
+            continue
+        nbr_d = sorted(dist_end[v] for v in neighbors(idx) if dist_end[v] < INF)
+        if len(nbr_d) >= 2:
+            two_dist_end[idx] = cost + nbr_d[1]
+        elif nbr_d:
+            two_dist_end[idx] = cost + nbr_d[0]
+
+    # Path value through cell v = dist_start[v] + two_dist_end[v] - cell_cost(v)
+    two_shortest = min(
+        (dist_start[r * size + c] + two_dist_end[r * size + c] - 1.0
+         for r in range(size) for c in range(size)
+         if board[r][c] == 0
+         and dist_start[r * size + c] < INF
+         and two_dist_end[r * size + c] < INF),
+        default=INF,
+    )
+
+    if two_shortest >= INF:
+        return set(), shortest
+
     return {
         (r, c)
         for r in range(size)
         for c in range(size)
         if board[r][c] == 0
-        and dist_start[r * size + c] + dist_end[r * size + c] - 1.0 == shortest
+        and dist_start[r * size + c] + two_dist_end[r * size + c] - 1.0 == two_shortest
     }, shortest
 
 
