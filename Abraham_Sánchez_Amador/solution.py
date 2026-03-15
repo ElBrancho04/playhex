@@ -377,10 +377,11 @@ class SmartPlayer(Player):
                     elif in1:         only1_pool.append(cell)
                     elif in2:         only2_pool.append(cell)
                     else:             other_pool.append(cell)
-                steps_total = len(node.free_cells)
-                crit_total  = len(both_pool) + len(only1_pool) + len(only2_pool)
-                crit_played = 0
+                steps_total  = len(node.free_cells)
+                crit_total   = len(both_pool) + len(only1_pool) + len(only2_pool)
+                crit_played  = 0
                 forced_threshold = size * size // 3
+                depth_factor = max(0.0, 1.0 - 1.5 * len(path) / len(free)) if free else 0.0
                 forced      = None
                 last_r2, last_c2 = (path[-1][1], path[-1][2]) if path else (-1, -1)
 
@@ -435,11 +436,11 @@ class SmartPlayer(Player):
                         sim_to_move = 3 - sim_to_move
                         continue
 
-                    # Decaying confidence: max(ratio_crit, ratio_total)
+                    # Decaying confidence scaled by depth_factor (trust in root Dijkstra)
                     steps_played = steps_total - remaining
                     ratio_total  = steps_played / steps_total if steps_total > 0 else 1.0
                     ratio_crit   = (crit_played / crit_total) if crit_total > 0 else 1.0
-                    p_crit       = max(0.0, 1.0 - 1.5 * max(ratio_crit, ratio_total))
+                    p_crit       = max(0.0, depth_factor * (1.0 - 1.5 * max(ratio_crit, ratio_total)))
 
                     any_crit = both_pool or only1_pool or only2_pool
                     if any_crit and (not other_pool or random() < p_crit):
