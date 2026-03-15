@@ -30,6 +30,7 @@ def get_neighbors(r: int, c: int, size: int) -> list[tuple[int, int]]:
 # Module-level neighbors cache: _NBRS[size][r][c] → list of (nr, nc)
 # Built once per board size, reused across every make_move call.
 _NBRS: dict[int, list] = {}
+_CENTRAL: dict[int, frozenset] = {}
 
 
 def resistance_dijkstra(
@@ -274,6 +275,12 @@ class SmartPlayer(Player):
                 [get_neighbors(r, c, size) for c in range(size)]
                 for r in range(size)
             ]
+            cr, cc = size // 2, size // 2
+            rad    = size // 4
+            _CENTRAL[size] = frozenset(
+                (r, c) for r in range(size) for c in range(size)
+                if abs(r - cr) <= rad and abs(c - cc) <= rad
+            )
 
         # Build DSUs incrementally from the existing board state
         dsu_me  = ReversibleDSU(size, self.player_id)
@@ -304,6 +311,9 @@ class SmartPlayer(Player):
             undo_move(b, r, c, dsu_me, dsu_opp, *cp)
             if opp_wins:
                 return (r, c)
+
+        is_opening = (size * size - len(free)) <= size // 2
+        central    = _CENTRAL.get(size, frozenset())
 
         crit1, d1 = resistance_dijkstra(b, 1, size)
         b_inv     = [[2 if v == 1 else (1 if v == 2 else 0) for v in row] for row in b]
@@ -347,7 +357,11 @@ class SmartPlayer(Player):
 
             # EXPAND
             if not winner and node.untried_moves:
-                r, c = choice(node.untried_moves)
+                if is_opening and random() < 0.7:
+                    central_untried = [m for m in node.untried_moves if m in central]
+                    r, c = choice(central_untried) if central_untried else choice(node.untried_moves)
+                else:
+                    r, c = choice(node.untried_moves)
                 node.untried_moves.remove((r, c))
                 cp_me, cp_opp = make_move(b, r, c, to_move, dsu_me, dsu_opp, size)
 
