@@ -391,9 +391,9 @@ class SmartPlayer(Player):
                 only2_pool  = list((free_set & crit2) - crit1)
                 other_pool  = list(free_set - crit1 - crit2)
                 steps_total = len(node.free_cells)
-
-                # Seed last move from path so neighbor scan works from first step
-                forced          = None
+                crit_total  = len(both_pool) + len(only1_pool) + len(only2_pool)
+                crit_played = 0
+                forced      = None
                 last_r2, last_c2 = (path[-1][1], path[-1][2]) if path else (-1, -1)
 
                 while both_pool or only1_pool or only2_pool or other_pool:
@@ -423,9 +423,11 @@ class SmartPlayer(Player):
                         sim_to_move = 3 - sim_to_move
                         continue
 
-                    # Decaying confidence: reaches 0 at 66.7% of playout
+                    # Decaying confidence: max(ratio_crit, ratio_total)
                     steps_played = steps_total - remaining
-                    p_crit       = max(0.0, 1.0 - 1.5 * (steps_played / steps_total))
+                    ratio_total  = steps_played / steps_total if steps_total > 0 else 1.0
+                    ratio_crit   = (crit_played / crit_total) if crit_total > 0 else 1.0
+                    p_crit       = max(0.0, 1.0 - 1.5 * max(ratio_crit, ratio_total))
 
                     any_crit = both_pool or only1_pool or only2_pool
                     if any_crit and (not other_pool or random() < p_crit):
@@ -446,7 +448,9 @@ class SmartPlayer(Player):
                     else:
                         chosen = _pop_random(other_pool)
 
-                    r2, c2        = chosen
+                    r2, c2 = chosen
+                    if (r2, c2) in crit1 or (r2, c2) in crit2:
+                        crit_played += 1
                     cp_me, cp_opp = make_move(b, r2, c2, sim_to_move, dsu_me, dsu_opp, size)
                     sim_path.append((r2, c2, cp_me, cp_opp))
                     last_r2, last_c2 = r2, c2
