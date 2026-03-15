@@ -319,22 +319,6 @@ class SmartPlayer(Player):
 
         deadline = time.time() + 5.0 - (0.35 + 0.002 * size)
 
-        def _find_forced(candidates, to_move):
-            for r2, c2 in candidates:
-                cp  = make_move(b, r2, c2, to_move, dsu_me, dsu_opp, size)
-                won = dsu_me.win() if to_move == 1 else dsu_opp.win()
-                undo_move(b, r2, c2, dsu_me, dsu_opp, *cp)
-                if won:
-                    return (r2, c2)
-            opp = 3 - to_move
-            for r2, c2 in candidates:
-                cp       = make_move(b, r2, c2, opp, dsu_me, dsu_opp, size)
-                opp_wins = dsu_opp.win() if opp == 2 else dsu_me.win()
-                undo_move(b, r2, c2, dsu_me, dsu_opp, *cp)
-                if opp_wins:
-                    return (r2, c2)
-            return None
-
         def _pop_random(lst):
             idx      = int(random() * len(lst))
             val      = lst[idx]
@@ -385,27 +369,55 @@ class SmartPlayer(Player):
             if not winner:
                 sim_path    = []
                 sim_to_move = to_move
-                free_set    = set(node.free_cells)
-                both_pool   = list(free_set & crit1 & crit2)
-                only1_pool  = list((free_set & crit1) - crit2)
-                only2_pool  = list((free_set & crit2) - crit1)
-                other_pool  = list(free_set - crit1 - crit2)
+                both_pool = []; only1_pool = []; only2_pool = []; other_pool = []
+                for cell in node.free_cells:
+                    in1 = cell in crit1
+                    in2 = cell in crit2
+                    if in1 and in2:   both_pool.append(cell)
+                    elif in1:         only1_pool.append(cell)
+                    elif in2:         only2_pool.append(cell)
+                    else:             other_pool.append(cell)
                 steps_total = len(node.free_cells)
                 crit_total  = len(both_pool) + len(only1_pool) + len(only2_pool)
                 crit_played = 0
+                forced_threshold = size * size // 3
                 forced      = None
                 last_r2, last_c2 = (path[-1][1], path[-1][2]) if path else (-1, -1)
 
                 while both_pool or only1_pool or only2_pool or other_pool:
                     remaining = len(both_pool) + len(only1_pool) + len(only2_pool) + len(other_pool)
 
-                    # Forced move: use precomputed result or scan neighbors of last played cell
-                    if forced is None and last_r2 >= 0:
-                        nbr_candidates = [
-                            (nr, nc) for nr, nc in _NBRS[size][last_r2][last_c2]
-                            if b[nr][nc] == 0
-                        ]
-                        forced = _find_forced(nbr_candidates, sim_to_move)
+                    # Forced move: single O(6x6) DSU-only pass, victory > block
+                    if remaining <= forced_threshold and last_r2 >= 0:
+                        dsu_cur  = dsu_me  if sim_to_move == 1 else dsu_opp
+                        dsu_opp_ = dsu_opp if sim_to_move == 1 else dsu_me
+                        own_val  = sim_to_move
+                        opp_val  = 3 - sim_to_move
+                        rs_cur   = dsu_cur.find(dsu_cur.VSTART)
+                        re_cur   = dsu_cur.find(dsu_cur.VEND)
+                        rs_opp   = dsu_opp_.find(dsu_opp_.VSTART)
+                        re_opp   = dsu_opp_.find(dsu_opp_.VEND)
+                        block    = None
+                        for nr, nc in _NBRS[size][last_r2][last_c2]:
+                            if b[nr][nc] != 0:
+                                continue
+                            ts = te = fs = fe = False
+                            for xr, xc in _NBRS[size][nr][nc]:
+                                v = b[xr][xc]
+                                if v == own_val:
+                                    rr = dsu_cur.find(xr * size + xc)
+                                    if rr == rs_cur: ts = True
+                                    if rr == re_cur: te = True
+                                elif v == opp_val:
+                                    rr = dsu_opp_.find(xr * size + xc)
+                                    if rr == rs_opp: fs = True
+                                    if rr == re_opp: fe = True
+                            if ts and te:
+                                forced = (nr, nc); break
+                            if fs and fe and block is None:
+                                block = (nr, nc)
+                        if forced is None:
+                            forced = block
 
                     if forced is not None:
                         r2, c2 = forced
