@@ -276,7 +276,7 @@ class SmartPlayer(Player):
                 for r in range(size)
             ]
             cr, cc  = size // 2 + 1, size // 2 + 1
-            rad     = size // 4
+            rad     = size // 3
             central = []
             for dr in range(-rad, rad + 1):
                 c_rad = rad - abs(dr)
