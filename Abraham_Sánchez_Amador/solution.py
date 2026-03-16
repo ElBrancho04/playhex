@@ -275,12 +275,16 @@ class SmartPlayer(Player):
                 [get_neighbors(r, c, size) for c in range(size)]
                 for r in range(size)
             ]
-            cr, cc = size // 2, size // 2
-            rad    = size // 4
-            _CENTRAL[size] = frozenset(
-                (r, c) for r in range(size) for c in range(size)
-                if abs(r - cr) <= rad and abs(c - cc) <= rad
-            )
+            cr, cc  = size // 2 + 1, size // 2 + 1
+            rad     = size // 4
+            central = []
+            for dr in range(-rad, rad + 1):
+                c_rad = rad - abs(dr)
+                for dc in range(-c_rad, c_rad + 1):
+                    r, c = cr + dr, cc + dc
+                    if 0 <= r < size and 0 <= c < size:
+                        central.append((r, c))
+            _CENTRAL[size] = frozenset(central)
 
         # Build DSUs incrementally from the existing board state
         dsu_me  = ReversibleDSU(size, self.player_id)
@@ -357,7 +361,7 @@ class SmartPlayer(Player):
 
             # EXPAND
             if not winner and node.untried_moves:
-                if is_opening and random() < 0.7:
+                if is_opening and random() < 0.85:
                     central_untried = [m for m in node.untried_moves if m in central]
                     r, c = choice(central_untried) if central_untried else choice(node.untried_moves)
                 else:
