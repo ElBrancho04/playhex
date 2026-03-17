@@ -348,7 +348,11 @@ class SmartPlayer(Player):
             winner  = 0
 
             # SELECT
-            while not node.untried_moves and node.children:
+            while node.children:
+                max_allowed_children = 2 + int(5 * sqrt(node.visits))
+                if node.untried_moves and len(node.children) < max_allowed_children:
+                    break
+                    
                 node          = node.best_child()
                 r, c          = node.move
                 cp_me, cp_opp = make_move(b, r, c, to_move, dsu_me, dsu_opp, size)
@@ -361,11 +365,23 @@ class SmartPlayer(Player):
 
             # EXPAND
             if not winner and node.untried_moves:
+                depth_factor = max(0.0, 1.0 - 1.5 * len(path) / len(free)) if free else 0.0
+                chosen_move = None
+                
                 if is_opening and random() < 0.85:
-                    central_untried = [m for m in node.untried_moves if m in central]
-                    r, c = choice(central_untried) if central_untried else choice(node.untried_moves)
-                else:
-                    r, c = choice(node.untried_moves)
+                    preferred = [m for m in node.untried_moves if m in central]
+                    if preferred:
+                        chosen_move = choice(preferred)
+                        
+                elif random() < (0.7 * depth_factor):
+                    preferred = [m for m in node.untried_moves if m in crit1 or m in crit2]
+                    if preferred:
+                        chosen_move = choice(preferred)
+                        
+                if chosen_move is None:
+                    chosen_move = choice(node.untried_moves)
+                    
+                r, c = chosen_move
                 node.untried_moves.remove((r, c))
                 cp_me, cp_opp = make_move(b, r, c, to_move, dsu_me, dsu_opp, size)
 
