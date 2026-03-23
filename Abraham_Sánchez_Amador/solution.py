@@ -48,7 +48,7 @@ def resistance_dijkstra(
             return 0.0
         r, c = divmod(idx, size)
         val  = board[r][c]
-        if val == 1: return 0.0
+        if val == player_id: return 0.0
         if val == 0: return 1.0
         return INF
 
@@ -198,10 +198,11 @@ def make_move(
     cell_value: int,
     dsu_me: ReversibleDSU,
     dsu_opp: ReversibleDSU,
+    me_id: int,
     size: int,
 ) -> tuple[int, int]:
     board[r][c] = cell_value
-    dsu        = dsu_me if cell_value == 1 else dsu_opp
+    dsu        = dsu_me if cell_value == me_id else dsu_opp
     cp_me      = dsu_me.checkpoint()
     cp_opp     = dsu_opp.checkpoint()
     idx        = r * size + c
@@ -292,7 +293,7 @@ class SmartPlayer(Player):
         for r in range(size):
             for c in range(size):
                 if b[r][c] != 0:
-                    make_move(b, r, c, b[r][c], dsu_me, dsu_opp, size)
+                    make_move(b, r, c, b[r][c], dsu_me, dsu_opp, self.player_id, size)
 
         free = [(r, c) for r in range(size) for c in range(size) if b[r][c] == 0]
 
@@ -302,7 +303,7 @@ class SmartPlayer(Player):
         # Forced moves
         # Pass 1: immediate winning move for me
         for r, c in free:
-            cp = make_move(b, r, c, 1, dsu_me, dsu_opp, size)
+            cp = make_move(b, r, c, self.player_id, dsu_me, dsu_opp, self.player_id, size)
             won = dsu_me.win()
             undo_move(b, r, c, dsu_me, dsu_opp, *cp)
             if won:
@@ -310,7 +311,7 @@ class SmartPlayer(Player):
 
         # Pass 2: block opponent's immediate winning move
         for r, c in free:
-            cp = make_move(b, r, c, 2, dsu_me, dsu_opp, size)
+            cp = make_move(b, r, c, 3 - self.player_id, dsu_me, dsu_opp, self.player_id, size)
             opp_wins = dsu_opp.win()
             undo_move(b, r, c, dsu_me, dsu_opp, *cp)
             if opp_wins:
@@ -319,9 +320,8 @@ class SmartPlayer(Player):
         is_opening = (size * size - len(free)) <= size // 2
         central    = _CENTRAL.get(size, frozenset())
 
-        crit1, d1 = resistance_dijkstra(b, 1, size)
-        b_inv     = [[2 if v == 1 else (1 if v == 2 else 0) for v in row] for row in b]
-        crit2, d2 = resistance_dijkstra(b_inv, 2, size)
+        crit1, d1 = resistance_dijkstra(b, self.player_id, size)
+        crit2, d2 = resistance_dijkstra(b, 3-self.player_id, size)
         total_d   = d1 + d2
         p1_off    = (d2 / total_d) if total_d > 0 else 0.5
 
@@ -344,7 +344,7 @@ class SmartPlayer(Player):
             node    = root
             # path entries: (node, r, c, cp_me, cp_opp)
             path    = []
-            to_move = 1
+            to_move = self.player_id
             winner  = 0
 
             # SELECT
@@ -355,13 +355,13 @@ class SmartPlayer(Player):
                     
                 node          = node.best_child()
                 r, c          = node.move
-                cp_me, cp_opp = make_move(b, r, c, to_move, dsu_me, dsu_opp, size)
+                cp_me, cp_opp = make_move(b, r, c, to_move, dsu_me, dsu_opp, self.player_id, size)
                 path.append((node, r, c, cp_me, cp_opp))
                 to_move = 3 - to_move
                 if dsu_me.win():
-                    winner = 1; break
+                    winner = self.player_id; break
                 if dsu_opp.win():
-                    winner = 2; break
+                    winner = 3 - self.player_id; break
 
             # EXPAND
             if not winner and node.untried_moves:
@@ -383,10 +383,10 @@ class SmartPlayer(Player):
                     
                 r, c = chosen_move
                 node.untried_moves.remove((r, c))
-                cp_me, cp_opp = make_move(b, r, c, to_move, dsu_me, dsu_opp, size)
+                cp_me, cp_opp = make_move(b, r, c, to_move, dsu_me, dsu_opp, self.player_id, size)
 
-                if dsu_me.win():    winner = 1
-                elif dsu_opp.win(): winner = 2
+                if dsu_me.win():    winner = self.player_id
+                elif dsu_opp.win(): winner = 3 - self.player_id
 
                 child_free = [x for x in node.free_cells if x != (r, c)]
                 child = MCTSNode(
@@ -424,8 +424,8 @@ class SmartPlayer(Player):
 
                     # Forced move: single O(6x6) DSU-only pass, victory > block
                     if remaining <= forced_threshold and last_r2 >= 0:
-                        dsu_cur  = dsu_me  if sim_to_move == 1 else dsu_opp
-                        dsu_opp_ = dsu_opp if sim_to_move == 1 else dsu_me
+                        dsu_cur  = dsu_me  if sim_to_move == self.player_id else dsu_opp
+                        dsu_opp_ = dsu_opp if sim_to_move == self.player_id else dsu_me
                         own_val  = sim_to_move
                         opp_val  = 3 - sim_to_move
                         rs_cur   = dsu_cur.find(dsu_cur.VSTART)
@@ -460,13 +460,13 @@ class SmartPlayer(Player):
                         for pool in (both_pool, only1_pool, only2_pool, other_pool):
                             if (r2, c2) in pool:
                                 pool.remove((r2, c2)); break
-                        cp_me, cp_opp = make_move(b, r2, c2, sim_to_move, dsu_me, dsu_opp, size)
+                        cp_me, cp_opp = make_move(b, r2, c2, sim_to_move, dsu_me, dsu_opp, self.player_id, size)
                         sim_path.append((r2, c2, cp_me, cp_opp))
                         last_r2, last_c2 = r2, c2
                         if dsu_me.win():
-                            winner = 1; break
+                            winner = self.player_id; break
                         if dsu_opp.win():
-                            winner = 2; break
+                            winner = 3 - self.player_id; break
                         sim_to_move = 3 - sim_to_move
                         continue
 
@@ -481,9 +481,9 @@ class SmartPlayer(Player):
                         if both_pool:
                             chosen = _pop_random(both_pool)
                         else:
-                            p_off              = p1_off if sim_to_move == 1 else 1.0 - p1_off
+                            p_off              = p1_off if sim_to_move == self.player_id else 1.0 - p1_off
                             off_pool, def_pool = (
-                                (only1_pool, only2_pool) if sim_to_move == 1
+                                (only1_pool, only2_pool) if sim_to_move == self.player_id
                                 else (only2_pool, only1_pool)
                             )
                             if off_pool and (not def_pool or random() < p_off):
@@ -498,13 +498,13 @@ class SmartPlayer(Player):
                     r2, c2 = chosen
                     if (r2, c2) in crit1 or (r2, c2) in crit2:
                         crit_played += 1
-                    cp_me, cp_opp = make_move(b, r2, c2, sim_to_move, dsu_me, dsu_opp, size)
+                    cp_me, cp_opp = make_move(b, r2, c2, sim_to_move, dsu_me, dsu_opp, self.player_id, size)
                     sim_path.append((r2, c2, cp_me, cp_opp))
                     last_r2, last_c2 = r2, c2
                     if dsu_me.win():
-                        winner = 1; break
+                        winner = self.player_id; break
                     if dsu_opp.win():
-                        winner = 2; break
+                        winner = 3 - self.player_id; break
                     sim_to_move = 3 - sim_to_move
 
                 for r2, c2, cp_me, cp_opp in reversed(sim_path):

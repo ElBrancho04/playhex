@@ -121,8 +121,9 @@ def play_game(p1_path: str, p2_path: str, size: int, verbose: bool = False):
 
     while True:
         hb = HexBoard(size)
+        hb.board = [row[:] for row in board]
+        
         if turn == 1:
-            hb.board = [row[:] for row in board]
             t0       = time.time()
             move     = p1.play(hb)
             elapsed  = time.time() - t0
@@ -130,10 +131,6 @@ def play_game(p1_path: str, p2_path: str, size: int, verbose: bool = False):
             if elapsed > TIME_LIMIT:
                 violations.append(f"S1 jugada {moves+1}: {elapsed:.3f}s")
         else:
-            hb.board = [
-                [2 if v == 1 else (1 if v == 2 else 0) for v in row]
-                for row in board
-            ]
             t0       = time.time()
             move     = p2.play(hb)
             elapsed  = time.time() - t0
